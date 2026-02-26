@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Robot Maze</title>
+
+<style>
+body { background:#000;color:#fff;font-family:sans-serif;margin:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;}
+canvas{width:100vw;height:45vh;background:#000;border-bottom:3px solid #0055ff;}
+.hud{position:absolute;top:10px;left:10px;width:45%;background:rgba(0,0,0,0.8);padding:8px;border:1px solid #0055ff;z-index:10;font-size:12px;}
+#radar{position:absolute;top:60px;left:50%;transform:translateX(-50%);color:#ff0;font-weight:bold;background:rgba(255,0,0,0.5);padding:5px 15px;border-radius:20px;display:none;z-index:11;animation:blink 0.5s infinite;}
+#minimap{position:absolute;top:10px;right:10px;width:110px;height:110px;background:#000;border:2px solid #fff;z-index:20;}
+.controls{display:grid;grid-template-columns:repeat(3,75px);gap:15px;margin-top:30px;}
+.btn{width:75px;height:75px;background:#222;border:2px solid #0055ff;color:#fff;font-size:25px;display:flex;align-items:center;justify-content:center;border-radius:10px;}
+.btn:active{background:#0055ff;}
+#alert{position:fixed;top:40%;background:red;color:white;padding:15px;font-weight:bold;display:none;z-index:100;border:2px solid white;text-align:center;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.2;}}
+</style>
+</head>
+
+<body>
+
+<canvas id="render"></canvas>
+<canvas id="minimap"></canvas>
+<div id="radar">⚠️ ENEMIGO CERCA ⚠️</div>
+<div id="alert">¡SISTEMA REINICIADO!</div>
+
+<div class="hud">
+<span>NIVEL: 1</span><br>
+<span>TIEMPO: <span id="timer">0.00</span>s</span>
+</div>
+
+<div class="controls">
+<div></div> <div class="btn" id="up">▲</div> <div></div>
+<div class="btn" id="left">◀</div> <div class="btn" id="down">▼</div> <div class="btn" id="right">▶</div>
+</div>
+
+<script>
+
+const canvas=document.getElementById('render');
+const ctx=canvas.getContext('2d');
+const mCanvas=document.getElementById('minimap');
+const mCtx=mCanvas.getContext('2d');
+const radar=document.getElementById('radar');
+const alertMsg=document.getElementById('alert');
+
+let world=[],rivals=[];
+let p={x:1.5,y:1.5,dir:0,v:0,rv:0};
+let gameActive=true,startTime=Date.now();
+
+function generateMaze(size){
+
+let maze=Array(size).fill().map(()=>Array(size).fill(1));
+let stack=[[1,1]];
+maze[1][1]=0;
+
+while(stack.length){
+let[cx,cy]=stack[stack.length-1];
+let n=[];
+[[0,-2],[0,2],[-2,0],[2,0]].forEach(([dx,dy])=>{
+let nx=cx+dx,ny=cy+dy;
+if(nx>0&&ny>0&&nx<size-1&&ny<size-1&&maze[ny][nx])
+n.push([nx,ny,dx,dy]);
+});
+if(n.length){
+let[nx,ny,dx,dy]=n[Math.floor(Math.random()*n.length)];
+maze[cy+dy/2][cx+dx/2]=0;
+maze[ny][nx]=0;
+stack.push([nx,ny]);
+}else stack.pop();
+}
+
+maze[size-2][size-2]=2;
+
+let rx=Math.floor(Math.random()*(size-2))+1;
+let ry=Math.floor(Math.random()*(size-2))+1;
+if(maze[ry][rx]==0)maze[ry][rx]=3;
+
+return maze;
+}
+
+function initLevel(){
+
+let size=17;
+world=generateMaze(size);
+
+p.x=1.5;p.y=1.5;p.v=0;p.rv=0;
+
+let empty=[];
+for(let y=0;y<size;y++)
+for(let x=0;x<size;x++)
+if(world[y][x]==0&&(x>3||y>3))
+empty.push({x:x+0.5,y:y+0.5});
+
+empty.sort(()=>Math.random()-0.5);
+
+rivals=[];
+for(let i=0;i<3;i++)
+if(empty[i])rivals.push(empty[i]);
+
+startTime=Date.now();
+}
+
+function drawMinimap(){
+
+let s=mCanvas.width/world.length;
+mCtx.fillStyle="#000";
+mCtx.fillRect(0,0,110,110);
+
+for(let y=0;y<world.length;y++){
+for(let x=0;x<world[y].length;x++){
+if(world[y][x]==1){mCtx.fillStyle="#333";mCtx.fillRect(x*s,y*s,s,s);}
+if(world[y][x]==2){mCtx.fillStyle="#0f0";mCtx.fillRect(x*s,y*s,s,s);}
+if(world[y][x]==3){mCtx.fillStyle="#f80";mCtx.fillRect(x*s,y*s,s,s);}
+}
+}
+
+mCtx.fillStyle="#fff";
+mCtx.fillRect(p.x*s-1,p.y*s-1,3,3);
+
+mCtx.fillStyle="#f00";
+rivals.forEach(r=>mCtx.fillRect(r.x*s-1,r.y*s-1,3,3));
+}
+
+function triggerReset(msg="REINICIO"){
+alertMsg.innerText=msg;
+alertMsg.style.display='block';
+gameActive=false;
+setTimeout(()=>{
+alertMsg.style.display='none';
+gameActive=true;
+initLevel();
+loop();
+},1000);
+}
+
+function loop(){
+
+if(!gameActive)return;
+
+canvas.width=window.innerWidth;
+canvas.height=canvas.offsetHeight;
+mCanvas.width=110;
+mCanvas.height=110;
+
+let minDist=10;
+rivals.forEach(r=>{
+let a=Math.atan2(p.y-r.y,p.x-r.x);
+let speed=0.015;
+let nx=r.x+Math.cos(a)*speed;
+let ny=r.y+Math.sin(a)*speed;
+if(world[Math.floor(ny)][Math.floor(nx)]==0){r.x=nx;r.y=ny;}
+let d=Math.hypot(p.x-r.x,p.y-r.y);
+if(d<minDist)minDist=d;
+if(d<0.3)triggerReset("ATRAPADO");
+});
+radar.style.display=minDist<2.5?'block':'none';
+
+let nx=p.x+Math.cos(p.dir)*p.v;
+let ny=p.y+Math.sin(p.dir)*p.v;
+let c=world[Math.floor(ny)][Math.floor(nx)];
+
+if(c==1)return triggerReset("CHOQUE");
+if(c==2){
+alertMsg.innerText="🏆 MISIÓN COMPLETADA";
+alertMsg.style.display='block';
+gameActive=false;
+return;
+}
+if(c==3)return triggerReset("SALIDA FALSA");
+
+p.x=nx;p.y=ny;
+p.dir+=p.rv;
+p.v*=0.8;p.rv*=0.7;
+
+ctx.fillStyle="#000";
+ctx.fillRect(0,0,canvas.width,canvas.height/2);
+ctx.fillStyle="#222";
+ctx.fillRect(0,canvas.height/2,canvas.width,canvas.height/2);
+
+const rays=65,fov=1.0,w=canvas.width/rays;
+
+for(let i=0;i<rays;i++){
+let ra=(p.dir-fov/2)+(i/rays)*fov;
+let d=0,hit=0;
+while(d<12){
+d+=0.08;
+let tx=Math.floor(p.x+Math.cos(ra)*d);
+let ty=Math.floor(p.y+Math.sin(ra)*d);
+if(world[ty]&&world[ty][tx]>0){
+hit=world[ty][tx];
+break;
+}
+}
+let h=canvas.height/(d*Math.cos(ra-p.dir));
+ctx.fillStyle=hit==1?"#0055ff":hit==2?"#0f0":hit==3?"#f80":"#f00";
+if(hit>0)ctx.fillRect(i*w,(canvas.height-h)/2,w+1,h);
+}
+
+drawMinimap();
+document.getElementById('timer').innerText=((Date.now()-startTime)/1000).toFixed(2);
+
+requestAnimationFrame(loop);
+}
+
+function setBtn(id,v,rv){
+let e=document.getElementById(id);
+e.onmousedown=e.ontouchstart=ev=>{
+ev.preventDefault();
+p.v=v;p.rv=rv;
+};
+e.onmouseup=e.ontouchend=()=>{
+p.v=0;p.rv=0;
+};
+}
+
+setBtn('up',0.12,0);
+setBtn('down',-0.1,0);
+setBtn('left',0,-0.1);
+setBtn('right',0,0.1);
+
+initLevel();
+loop();
+
+</script>
+</body>
+</html>
